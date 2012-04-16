@@ -269,6 +269,9 @@ function bitrand!(B::BitArray)
     return B
 end
 
+bitrand{T}(::Type{T}, dims::Dims) = bitrand!(BitArray(T, dims))
+bitrand{T}(::Type{T}, dims::Int...) = bitrand(T, dims)
+
 bitrand(dims::Dims) = bitrand!(BitArray(dims))
 bitrand(dims::Int...) = bitrand(dims)
 
@@ -530,9 +533,9 @@ assign{T<:Integer}(A::BitMatrix{T}, x, I::AbstractVector{Bool}, J::AbstractVecto
 
 ## Dequeue functionality ##
 
-function push(B::BitVector, item)
+function push{T<:Integer}(B::BitVector{T}, item)
     # convert first so we don't grow the bitarray if the assignment won't work
-    item = convert(Int, item)
+    item = convert(T, item)
     if item != 0 && item != 1
         error("invalid BitArray value")
     end
@@ -563,7 +566,7 @@ function append!(B::BitVector, items::BitVector)
     return B
 end
 
-append!{T}(B::BitVector, items::AbstractVector{T}) = append!(B, convert(BitVector, items))
+append!{T<:Integer,S}(B::BitVector{T}, items::AbstractVector{S}) = append!(B, convert(BitVector{T}, items))
 
 function grow(B::BitVector, n::Integer)
     n0 = length(B)
@@ -593,8 +596,8 @@ function pop(B::BitVector)
     return item
 end
 
-function enqueue(B::BitVector, item)
-    item = convert(Int, item)
+function enqueue{T<:Integer}(B::BitVector{T}, item)
+    item = convert(T, item)
     if item != 0 && item != 1
         error("invalid BitArray value")
     end
@@ -636,11 +639,11 @@ function shift(B::BitVector)
     return item
 end
 
-function insert(B::BitVector, i::Integer, item)
+function insert{T<:Integer}(B::BitVector{T}, i::Integer, item)
     if i < 1
         throw(BoundsError())
     end
-    item = convert(Int, item)
+    item = convert(T, item)
     if item != 0 && item != 1
         error("invalid BitArray value")
     end
