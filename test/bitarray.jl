@@ -60,9 +60,9 @@ t0 = time()
 ## Conversions ##
 
 b1 = bitrand(n1, n2)
-@assert isequal(convert(BitArray, convert(Array{Int}, b1)), b1)
+@assert isequal(convert(BitArray{Int}, convert(Array{Int}, b1)), b1)
 i1 = randbit(n1, n2)
-@assert isequal(convert(Array{Int}, convert(BitArray, i1)), i1)
+@assert isequal(convert(Array{Int}, convert(BitArray{Int}, i1)), i1)
 
 @timesofar "conversions"
 
@@ -119,7 +119,7 @@ for m = 1 : v1
     push(b1, x)
     push(i1, x)
     @assert isequal(int(b1), i1)
-    @assert isequal(b1, convert(BitArray, i1))
+    @assert isequal(b1, convert(BitArray{Int}, i1))
 end
 
 for m1 = 0 : v1

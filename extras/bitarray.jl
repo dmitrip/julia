@@ -2,7 +2,7 @@ _jl_num_bit_chunks(n::Integer) = (n + 0x3f) >>> 6
 
 # notes: bits are stored in contiguous chunks
 #        unused bits must always be set to 0
-type BitArray{N} <: AbstractArray{Int, N}
+type BitArray{T<:Integer, N} <: AbstractArray{T, N}
     chunks::Vector{Uint64}
     dims::Vector{Int}
     function BitArray(dims::Int...)
@@ -19,12 +19,15 @@ type BitArray{N} <: AbstractArray{Int, N}
     end
 end
 
-BitArray() = BitArray{1}(0)
-BitArray(dims::Dims) = BitArray{max(length(dims), 1)}(dims...)
-BitArray(dims::Int...) = BitArray{max(length(dims), 1)}(dims...)
+BitArray{T}(::Type{T}) = BitArray{T, 1}(0)
+BitArray() = BitArray(Int, 0)
+BitArray{T}(::Type{T}, dims::Dims) = BitArray{T, max(length(dims), 1)}(dims...)
+BitArray(dims::Dims) = BitArray(Int, dims)
+BitArray{T}(::Type{T}, dims::Int...) = BitArray{T, max(length(dims), 1)}(dims...)
+BitArray(dims::Int...) = BitArray(Int, dims...)
 
-typealias BitVector BitArray{1}
-typealias BitMatrix BitArray{2}
+typealias BitVector{T} BitArray{T,1}
+typealias BitMatrix{T} BitArray{T,2}
 
 # non-standard compact representation
 
@@ -52,16 +55,11 @@ function bitshow(B::BitArray)
     _jl_print_bit_chunk(B.chunks[end], l)
 end
 
-# standard representation header
-
-summary(B::BitArray) = 
-    strcat(dims2string(size(B)), " BitArray")
-
 ## utility functions ##
 
 length(B::BitArray) = prod(B.dims)
-eltype(B::BitArray) = Int
-ndims{N}(B::BitArray{N}) = N
+eltype{T}(B::BitArray{T}) = T
+ndims{T,N}(B::BitArray{T,N}) = N
 numel(B::BitArray) = prod(B.dims)
 size(B::BitArray) = tuple(B.dims...)
 isinteger(B::BitArray) = true
@@ -148,12 +146,13 @@ _jl_copy_chunks(dest::Vector{Uint64}, pos_d::Int, src::Vector{Uint64}, numbits::
 
 ## similar, fill, copy_to etc ##
 
-similar(B::BitArray) = BitArray(B.dims...)
-similar(B::BitArray, dims::Int...) = BitArray(dims)
-similar(B::BitArray, dims::Dims) = BitArray(dims...)
+similar{T}(B::BitArray{T}) = BitArray(T, B.dims...)
+similar{T}(B::BitArray{T}, dims::Int...) = BitArray(T, dims)
+similar{T}(B::BitArray{T}, dims::Dims) = BitArray(T, dims...)
 
 # changing type returns an Array, even if type is Int
 # (this triggers conversions like int(bitvector) etc.)
+# XXX: this has to go!
 similar(B::BitArray, T::Type, dims::Dims) = Array(T, dims)
 
 function fill!(B::BitArray, x::Integer)
@@ -214,11 +213,11 @@ function copy_to(dest::BitArray, pos_d::Integer, src::BitArray, pos_s::Integer, 
     return dest
 end
 
-function reshape{N}(B::BitArray, dims::NTuple{N,Int})
+function reshape{T,N}(B::BitArray{T}, dims::NTuple{N,Int})
     if prod(dims) != numel(B)
         error("reshape: invalid dimensions")
     end
-    Br = BitArray{N}()
+    Br = BitArray{T,N}()
     Br.chunks = B.chunks
     Br.dims = [i::Int | i=dims]
     return Br
@@ -229,7 +228,7 @@ bitones(args...) = fill!(BitArray(args...), 1)
 
 ## Conversions ##
 
-function convert{T,n}(::Type{Array{T,n}}, B::BitArray{n})
+function convert{T,S,n}(::Type{Array{T,n}}, B::BitArray{S,n})
     A = Array(T, size(B))
     for i = 1:length(A)
         A[i] = B[i]
@@ -237,7 +236,7 @@ function convert{T,n}(::Type{Array{T,n}}, B::BitArray{n})
     return A
 end
 
-function convert{T,n}(::Type{BitArray{n}}, A::AbstractArray{T,n})
+function convert{T,S,n}(::Type{BitArray{S,n}}, A::AbstractArray{T,n})
     B = BitArray(size(A))
     for i = 1:length(B)
         B[i] = A[i]
@@ -265,13 +264,16 @@ bitrand(dims::Int...) = bitrand(dims)
 
 ## Indexing: ref ##
 
-function ref(B::BitArray, i::Integer)
+function ref{T<:Integer}(B::BitArray{T}, i::Integer)
     if i < 1 || i > length(B)
         throw(BoundsError())
     end
     i1, i2 = _jl_get_chunks_id(i)
-    return int((B.chunks[i1] >>> i2) & 1)
+    return (B.chunks[i1] >>> i2) & 0x1 == 0x1 ? one(T) : zero(T)
 end
+
+# FIXME: 0d bitarray
+ref{T}(B::BitArray{T,0}) = B[1]
 
 ref(B::BitArray, i0::Integer, i1::Integer) = B[i0 + size(B,1)*(i1-1)]
 ref(B::BitArray, i0::Integer, i1::Integer, i2::Integer) =
@@ -279,7 +281,9 @@ ref(B::BitArray, i0::Integer, i1::Integer, i2::Integer) =
 ref(B::BitArray, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
     B[i0 + size(B,1)*((i1-1) + size(B,2)*((i2-1) + size(B,3)*(i3-1)))]
 
-function ref(B::BitArray, I::Integer...)
+# note: although unused, the T here is necessary, otherwhise
+#       ref(::BitArray, ::Integer) is shadowed (?)
+function ref{T<:Integer}(B::BitArray{T}, I::Integer...)
     ndims = length(I)
     index = I[1]
     stride = 1
@@ -324,10 +328,10 @@ function _jl_ref_bool_1d(B::BitArray, I::AbstractArray{Bool})
     out
 end
 
-ref(B::BitVector, I::AbstractVector{Bool}) = _jl_ref_bool_1d(B, I)
-ref(B::BitVector, I::AbstractArray{Bool}) = _jl_ref_bool_1d(B, I)
-ref(B::BitArray, I::AbstractVector{Bool}) = _jl_ref_bool_1d(B, I)
-ref(B::BitArray, I::AbstractArray{Bool}) = _jl_ref_bool_1d(B, I)
+ref{T<:Integer}(B::BitVector{T}, I::AbstractVector{Bool}) = _jl_ref_bool_1d(B, I)
+ref{T<:Integer}(B::BitVector{T}, I::AbstractArray{Bool}) = _jl_ref_bool_1d(B, I)
+ref{T<:Integer}(B::BitArray{T}, I::AbstractVector{Bool}) = _jl_ref_bool_1d(B, I)
+ref{T<:Integer}(B::BitArray{T}, I::AbstractArray{Bool}) = _jl_ref_bool_1d(B, I)
 
 ref(B::BitMatrix, I::Integer, J::AbstractVector{Bool}) = B[I, find(J)]
 ref(B::BitMatrix, I::AbstractVector{Bool}, J::Integer) = B[find(I), J]
@@ -351,36 +355,26 @@ function assign(B::BitArray, x::Integer, i::Integer)
     return x
 end
 
-function assign(B::BitArray, x::AbstractArray, i::Int)
-    B[i] = x[1]
-end
+# disambiguations first
+assign{T}(B::BitArray, x::AbstractArray{T}, i::Integer) = error("invalid argument")
+assign(B::BitArray, x::AbstractArray, i0::Integer, i1::Integer) = error("invalid argument")
+assign(B::BitArray, x::AbstractArray, i0::Integer, i1::Integer, i2::Integer) = error("invalid argument")
+assign(B::BitArray, x::AbstractArray, i0::Integer, i1::Integer, i2::Integer, i3::Integer) = error("invalid argument")
+assign(B::BitArray, x::AbstractArray, I0::Integer, I::Integer...) = error("invalid argument")
 
-function assign(B::BitArray, x::AbstractArray, i::Integer)
-    B[int(i)] = x[1]
-end
-
-function assign(B::BitArray, x, i::Integer)
-    B[int(i)] = int(x)
-end
+assign(B::BitArray, x, i::Integer) =
+    B[i] = int(x)
 
 assign(B::BitArray, x, i0::Integer, i1::Integer) =
-    B[i0 + size(B,1)*(i1-1)] = x
-assign(B::BitArray, x::AbstractArray, i0::Integer, i1::Integer) =
     B[i0 + size(B,1)*(i1-1)] = x
 
 assign(B::BitArray, x, i0::Integer, i1::Integer, i2::Integer) =
     B[i0 + size(B,1)*((i1-1) + size(B,2)*(i2-1))] = x
-assign(B::BitArray, x::AbstractArray, i0::Integer, i1::Integer, i2::Integer) =
-    B[i0 + size(B,1)*((i1-1) + size(B,2)*(i2-1))] = x
 
 assign(B::BitArray, x, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
     B[i0 + size(B,1)*((i1-1) + size(B,2)*((i2-1) + size(B,3)*(i3-1)))] = x
-assign(B::BitArray, x::AbstractArray, i0::Integer, i1::Integer, i2::Integer, i3::Integer) =
-    B[i0 + size(B,1)*((i1-1) + size(B,2)*((i2-1) + size(B,3)*(i3-1)))] = x
 
 assign(B::BitArray, x, I0::Integer, I::Integer...) = assign_scalarNDbit(B,x,I0,I...)
-assign(B::BitArray, x::AbstractArray, I0::Integer, I::Integer...) =
-    assign_scalarNDbit(B,x,I0,I...)
 
 function assign_scalarNDbit(B::BitArray, x, I0::Integer, I::Integer...)
     index = I0
@@ -513,14 +507,14 @@ assign(A::BitArray, X::AbstractArray, I::AbstractArray{Bool}) = _jl_assign_bool_
 assign(A::BitArray, x, I::AbstractVector{Bool}) = _jl_assign_bool_scalar_1d(A, x, I)
 assign(A::BitArray, x, I::AbstractArray{Bool}) = _jl_assign_bool_scalar_1d(A, x, I)
 
-assign(A::BitMatrix, x::AbstractArray, I::Integer, J::AbstractVector{Bool}) = (A[I,find(J)]=x)
-assign(A::BitMatrix, x, I::Integer, J::AbstractVector{Bool}) = (A[I,find(J)]=x)
+assign{T<:Integer}(A::BitMatrix{T}, x::AbstractArray, I::Integer, J::AbstractVector{Bool}) = (A[I,find(J)]=x)
+assign{T<:Integer}(A::BitMatrix{T}, x, I::Integer, J::AbstractVector{Bool}) = (A[I,find(J)]=x)
 
-assign(A::BitMatrix, x::AbstractArray, I::AbstractVector{Bool}, J::Integer) = (A[find(I),J]=x)
-assign(A::BitMatrix, x, I::AbstractVector{Bool}, J::Integer) = (A[find(I),J]=x)
+assign{T<:Integer}(A::BitMatrix{T}, x::AbstractArray, I::AbstractVector{Bool}, J::Integer) = (A[find(I),J]=x)
+assign{T<:Integer}(A::BitMatrix{T}, x, I::AbstractVector{Bool}, J::Integer) = (A[find(I),J]=x)
 
-assign(A::BitMatrix, x::AbstractArray, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = (A[find(I),find(J)]=x)
-assign(A::BitMatrix, x, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = (A[find(I),find(J)]=x)
+assign{T<:Integer}(A::BitMatrix{T}, x::AbstractArray, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = (A[find(I),find(J)]=x)
+assign{T<:Integer}(A::BitMatrix{T}, x, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = (A[find(I),find(J)]=x)
 
 
 ## Dequeue functionality ##
@@ -818,18 +812,18 @@ function (.*)(x::Number, B::BitArray)
 end
 (.*)(A::BitArray, x::Number) = x .* A
 
-(*)(A::BitArray, B::BitArray) = int(A) * int(B)
+(*){T<:Integer}(A::BitArray{T}, B::BitArray{T}) = int(A) * int(B)
 
 #disambiguations
-(*)(A::BitMatrix, B::BitVector) = invoke((*), (BitArray, BitArray), A, B)
-(*)(A::BitVector, B::BitMatrix) = invoke((*), (BitArray, BitArray), A, B)
-(*)(A::BitMatrix, B::BitMatrix) = invoke((*), (BitArray, BitArray), A, B)
-(*){T}(A::BitMatrix, B::AbstractVector{T}) = (*)(int(A), B)
-(*){T}(A::BitVector, B::AbstractMatrix{T}) = (*)(int(A), B)
-(*){T}(A::BitMatrix, B::AbstractMatrix{T}) = (*)(int(A), B)
-(*){T}(A::AbstractVector{T}, B::BitMatrix) = (*)(A, int(B))
-(*){T}(A::AbstractMatrix{T}, B::BitVector) = (*)(A, int(B))
-(*){T}(A::AbstractMatrix{T}, B::BitMatrix) = (*)(A, int(B))
+(*){T<:Integer}(A::BitMatrix{T}, B::BitVector{T}) = int(A) * int(B)
+(*){T<:Integer}(A::BitVector{T}, B::BitMatrix{T}) = int(A) * int(B)
+(*){T<:Integer}(A::BitMatrix{T}, B::BitMatrix{T}) = int(A) * int(B)
+(*){T<:Integer}(A::BitMatrix{T}, B::AbstractVector) = (*)(int(A), B)
+(*){T<:Integer}(A::BitVector{T}, B::AbstractMatrix) = (*)(int(A), B)
+(*){T<:Integer}(A::BitMatrix{T}, B::AbstractMatrix) = (*)(int(A), B)
+(*){T<:Integer}(A::AbstractVector, B::BitMatrix{T}) = (*)(A, int(B))
+(*){T<:Integer}(A::AbstractMatrix, B::BitVector{T}) = (*)(A, int(B))
+(*){T<:Integer}(A::AbstractMatrix, B::BitMatrix{T}) = (*)(A, int(B))
 #end disambiguations
 
 for f in (:+, :-, :div, :mod, :./, :.^, :/, :\, :*, :.*, :&, :|, :$)
@@ -1247,6 +1241,8 @@ end
 
 transpose(B::BitVector) = reshape(copy(B), 1, length(B))
 
+# fast 8x8 bit transpose from Henry S. Warrens's "Hacker's Delight"
+# http://www.hackersdelight.org/HDcode/transpose8.c.txt
 function _jl_transpose8rS64(x::Uint64)
    t = (x $ (x >>> 7)) & 0x00aa00aa00aa00aa;
    x = x $ t $ (t << 7);
