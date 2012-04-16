@@ -254,6 +254,24 @@ function convert{T,S,n}(::Type{BitArray{S,n}}, A::AbstractArray{T,n})
     return B
 end
 
+convert{T<:Integer,S<:Integer,n}(::Type{BitArray{T,n}}, B::BitArray{S,n}) =
+    copy_to(BitArray(T, size(B)), B) # TODO: use similar when avaliable
+
+convert{T<:Integer,S,n}(::Type{T}, B::BitArray{S,n}) =
+    convert(BitArray{T, n}, B)
+
+# XXX : this is what Array does; but here it would make sense to keep
+#       dimensionality!
+function reinterpret{T<:Integer,S<:Integer}(::Type{T}, B::BitArray{S})
+    A = BitArray(T, numel(B))
+    A.chunks = B.chunks
+    return A
+end
+
+# shorthand forms BitArray <-> Array
+bitunpack{T,n}(B::BitArray{T,n}) = convert(Array{T,n}, B)
+bitpack{T,n}(A::Array{T,n}) = convert(BitArray{T,n}, A)
+
 ## Random ##
 
 function bitrand!(B::BitArray)
@@ -746,7 +764,19 @@ end
 
 ## Unary operators ##
 
-function (~)(B::BitArray)
+(~)(B::BitArray) = ~bitunpack(B)
+
+(-)(B::BitArray) = -bitunpack(B)
+sign(B::BitArray) = copy(B)
+
+real(B::BitArray) = copy(B)
+imag{T}(B::BitArray{T}) = bitzeros(T, size(B))
+
+conj!(B::BitArray) = B
+conj(B::BitArray) = copy(B)
+
+# Bools have special treatment
+function (~)(B::BitArray{Bool})
     C = similar(B)
     for i = 1:length(B.chunks) - 1
         C.chunks[i] = (~)(B.chunks[i])
@@ -756,16 +786,10 @@ function (~)(B::BitArray)
     C.chunks[end] = msk & (~B.chunks[end])
     return C
 end
-
-(-)(B::BitArray) = -int(B)
+!(B::BitArray{Bool}) = ~B
 (-)(B::BitArray{Bool}) = copy(B)
-sign(B::BitArray) = copy(B)
+sign(B::BitArray{Bool}) = convert(Int, B)
 
-real(B::BitArray) = copy(B)
-imag(B::BitArray) = bitzeros(size(B))
-
-conj!(B::BitArray) = B
-conj(B::BitArray) = copy(B)
 
 ## Binary arithmetic operators ##
 

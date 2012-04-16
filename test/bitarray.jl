@@ -223,7 +223,7 @@ del_all(i1)
 ## Unary operators ##
 
 b1 = bitrand(n1, n2)
-@assert isequal(int(~b1), 1 - int(b1))
+@assert isequal(int(~b1), ~int(b1))
 @check_bit_operation1 (-) Array{Int} b1
 @check_bit_operation1 sign Array{Int} b1
 @check_bit_operation1 real Array{Int} b1
