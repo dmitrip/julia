@@ -152,15 +152,16 @@ similar{T}(B::BitArray{T}, dims::Dims) = BitArray(T, dims...)
 
 # changing type returns an Array, even if type is Int
 # (this triggers conversions like int(bitvector) etc.)
-# XXX: this has to go!
+# XXX: this has to go away!
 similar(B::BitArray, T::Type, dims::Dims) = Array(T, dims)
 
-function fill!(B::BitArray, x::Integer)
-    if x == 0
+function fill!{T<:Integer}(B::BitArray{T}, x::Number)
+    y = convert(T, x)
+    if y == 0
         for i = 1 : length(B.chunks)
             B.chunks[i] = uint64(0)
         end
-    elseif x == 1
+    elseif y == 1
         if length(B) == 0
             return B
         end
@@ -175,14 +176,26 @@ function fill!(B::BitArray, x::Integer)
     end
     return B
 end
+
 fill!(B::BitArray, x) = fill!(B, int(x))
 
-fill(B::BitArray, x::Integer) = fill!(similar(B), x)
+fill{T}(B::BitArray{T}, x::Integer) = fill!(similar(B), x)
 # disambiguation
 # (this is going to throw an error anyway)
-fill(B::BitArray, x::(Int64...,)) = fill(B, int(x))
+fill{T}(B::BitArray{T}, x::(Int64...,)) = fill(B, int(x))
 # end disambiguation
-fill(B::BitArray, x) = fill(B, int(x))
+fill{T}(B::BitArray{T}, x) = fill(B, convert(T, x))
+
+bitzeros{T}(::Type{T}, args...) = fill!(BitArray(T, args...), 0)
+bitzeros(args...) = fill!(BitArray(args...), 0)
+
+bitones{T}(::Type{T}, args...) = fill!(BitArray(T, args...), 1)
+bitones(args...) = fill!(BitArray(args...), 1)
+
+# XXX: temporary!?
+bitfalses(args...) = bitzeros(Bool, args...)
+bittrues(args...) = bitones(Bool, args...)
+
 
 function copy_to(dest::BitArray, src::BitArray)
     nc_d = length(dest.chunks)
@@ -222,9 +235,6 @@ function reshape{T,N}(B::BitArray{T}, dims::NTuple{N,Int})
     Br.dims = [i::Int | i=dims]
     return Br
 end
-
-bitzeros(args...) = fill!(BitArray(args...), 0)
-bitones(args...) = fill!(BitArray(args...), 1)
 
 ## Conversions ##
 
@@ -339,20 +349,21 @@ ref(B::BitMatrix, I::AbstractVector{Bool}, J::AbstractVector{Bool}) = B[find(I),
 
 ## Indexing: assign ##
 
-function assign(B::BitArray, x::Integer, i::Integer)
+function assign{T<:Integer}(B::BitArray{T}, x::Number, i::Integer)
     if i < 1 || i > length(B)
         throw(BoundsError())
     end
     i1, i2 = _jl_get_chunks_id(i)
     u = uint64(1)
-    if x == 0
+    y = convert(T, x)
+    if y == 0
         B.chunks[i1] &= ~(u << i2)
-    elseif x == 1
+    elseif y == 1
         B.chunks[i1] |= (u << i2)
     else
         error("invalid BitArray value")
     end
-    return x
+    return B
 end
 
 # disambiguations first
@@ -744,6 +755,7 @@ function (~)(B::BitArray)
 end
 
 (-)(B::BitArray) = -int(B)
+(-)(B::BitArray{Bool}) = copy(B)
 sign(B::BitArray) = copy(B)
 
 real(B::BitArray) = copy(B)
